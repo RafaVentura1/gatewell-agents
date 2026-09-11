@@ -1,0 +1,16 @@
+# build output
+dist/
+publish/
+build/
+bin/
+obj/
+
+# produced installers
+GatewellAgent-*.exe
+GatewellAgent-*.pkg
+GatewellAgent-*.deb
+GatewellAgent-*.rpm
+gatewell-agent
+gatewell-agent-*
+
+.DS_Store
