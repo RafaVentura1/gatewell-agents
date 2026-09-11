@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Gatewell agent — system-level launchd daemon.
+  Installed to /Library/LaunchDaemons/com.gatewell.agent.plist by the .pkg.
+  Runs as root: required for /etc/gatewell, script execution, and lsof.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.gatewell.agent</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/gatewell-agent</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <!-- Do not respawn faster than this if the agent exits repeatedly. -->
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+
+  <key>StandardOutPath</key>
+  <string>/var/log/gatewell-agent.log</string>
+  <key>StandardErrorPath</key>
+  <string>/var/log/gatewell-agent.log</string>
+
+  <key>WorkingDirectory</key>
+  <string>/usr/local/bin</string>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key>
+    <string>/var/root</string>
+    <key>PATH</key>
+    <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+</dict>
+</plist>
