@@ -1,0 +1,82 @@
+name: Build Linux Agent
+
+# CONTRACT: the Gatewell platform dispatches this workflow against `main` with
+# inputs: { org_id }, then polls the run and marks the installer Ready only when
+# conclusion == success.
+#
+# This workflow produces BOTH Linux packages and uploads them as two separate
+# artifacts with the exact names the platform expects.
+on:
+  workflow_dispatch:
+    inputs:
+      org_id:
+        description: 'Organization ID to stamp into the agent'
+        required: true
+        type: string
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          # No third-party deps, so there is no go.sum to cache against.
+          cache: false
+
+      - name: Install packaging tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends rpm dpkg-dev
+
+      - name: Vet
+        working-directory: macos/gatewell-agent-mac
+        run: GOOS=linux go vet ./...
+
+      - name: Build .deb
+        env:
+          # Optional. Unset -> the -X main.EnrollmentToken flag is omitted.
+          ENROLLMENT_TOKEN: ${{ secrets.ENROLLMENT_TOKEN }}
+        run: |
+          chmod +x build-deb.sh
+          ./build-deb.sh "${{ inputs.org_id }}"
+
+      - name: Build .rpm
+        env:
+          ENROLLMENT_TOKEN: ${{ secrets.ENROLLMENT_TOKEN }}
+        run: |
+          chmod +x build-rpm.sh
+          ./build-rpm.sh "${{ inputs.org_id }}"
+
+      - name: Verify artifacts exist
+        run: |
+          DEB="GatewellAgent-${{ inputs.org_id }}-amd64.deb"
+          RPM="GatewellAgent-${{ inputs.org_id }}-amd64.rpm"
+          test -f "$DEB" || { echo "::error::$DEB was not produced"; exit 1; }
+          test -f "$RPM" || { echo "::error::$RPM was not produced"; exit 1; }
+          ls -lh "$DEB" "$RPM"
+          echo "--- deb contents ---"
+          dpkg-deb -c "$DEB"
+          echo "--- rpm contents ---"
+          rpm -qlp "$RPM"
+
+      - name: Upload .deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: GatewellAgent-${{ inputs.org_id }}-amd64.deb
+          path: GatewellAgent-${{ inputs.org_id }}-amd64.deb
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload .rpm
+        uses: actions/upload-artifact@v4
+        with:
+          name: GatewellAgent-${{ inputs.org_id }}-amd64.rpm
+          path: GatewellAgent-${{ inputs.org_id }}-amd64.rpm
+          if-no-files-found: error
+          retention-days: 30

@@ -1,0 +1,65 @@
+name: Build macOS Agent
+
+# CONTRACT: the Gatewell platform dispatches this workflow against `main` with
+# inputs: { org_id }, then polls the run and marks the installer Ready only when
+# conclusion == success. Do not add required inputs or rename the artifact.
+#
+# Signing and notarization are optional: build-pkg.sh skips them when the
+# credentials below are unset, so this workflow succeeds with no secrets
+# configured.
+on:
+  workflow_dispatch:
+    inputs:
+      org_id:
+        description: 'Organization ID to stamp into the agent'
+        required: true
+        type: string
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          # No third-party deps, so there is no go.sum to cache against.
+          cache: false
+
+      - name: Vet
+        working-directory: macos/gatewell-agent-mac
+        run: go vet ./...
+
+      - name: Build .pkg
+        working-directory: macos/gatewell-agent-mac
+        env:
+          # Optional. Unset -> build-pkg.sh omits the -X main.EnrollmentToken flag.
+          ENROLLMENT_TOKEN: ${{ secrets.ENROLLMENT_TOKEN }}
+          # Optional signing/notarization. Unset -> build-pkg.sh skips them.
+          DEVELOPER_ID_APP: ${{ secrets.DEVELOPER_ID_APP }}
+          DEVELOPER_ID_INSTALLER: ${{ secrets.DEVELOPER_ID_INSTALLER }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          chmod +x build-pkg.sh
+          ./build-pkg.sh "${{ inputs.org_id }}"
+
+      - name: Verify artifact exists
+        working-directory: macos/gatewell-agent-mac
+        run: |
+          PKG="GatewellAgent-${{ inputs.org_id }}-macos.pkg"
+          test -f "$PKG" || { echo "::error::$PKG was not produced"; exit 1; }
+          ls -lh "$PKG"
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: GatewellAgent-${{ inputs.org_id }}-macos.pkg
+          path: macos/gatewell-agent-mac/GatewellAgent-${{ inputs.org_id }}-macos.pkg
+          if-no-files-found: error
+          retention-days: 30

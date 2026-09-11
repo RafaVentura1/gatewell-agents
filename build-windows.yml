@@ -1,0 +1,111 @@
+name: Build Windows Agent
+
+# CONTRACT: the Gatewell platform dispatches this workflow against `main` with
+# inputs: { org_id }. It then polls the run and marks the installer Ready only
+# when conclusion == success. Do not add required inputs or rename the artifact.
+on:
+  workflow_dispatch:
+    inputs:
+      org_id:
+        description: 'Organization ID to stamp into the agent'
+        required: true
+        type: string
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Stamp build-time constants into Config.cs
+        shell: pwsh
+        env:
+          ORG_ID: ${{ inputs.org_id }}
+          # Optional. When unset the placeholder is left in place and the agent
+          # enrolls without an enrollment token, matching the Go build scripts.
+          ENROLLMENT_TOKEN: ${{ secrets.ENROLLMENT_TOKEN }}
+        run: |
+          $path = 'windows/GatewellAgent/Config.cs'
+          $content = Get-Content $path -Raw
+
+          if ($content -notmatch '__ORG_ID__') {
+            Write-Error "Placeholder __ORG_ID__ not found in Config.cs"
+            exit 1
+          }
+
+          $content = $content -replace '__ORG_ID__', $env:ORG_ID
+
+          if ([string]::IsNullOrWhiteSpace($env:ENROLLMENT_TOKEN)) {
+            Write-Host "ENROLLMENT_TOKEN not configured - leaving placeholder"
+          } else {
+            $content = $content -replace '__ENROLLMENT_TOKEN__', $env:ENROLLMENT_TOKEN
+            Write-Host "ENROLLMENT_TOKEN stamped"
+          }
+
+          Set-Content -Path $path -Value $content -NoNewline
+
+          # Confirm the org replace landed. Never echo either value.
+          if ((Get-Content $path -Raw) -match '__ORG_ID__') {
+            Write-Error "ORG_ID stamping failed"
+            exit 1
+          }
+          Write-Host "ORG_ID stamped into Config.cs"
+
+      - name: Restore
+        run: dotnet restore windows/GatewellAgent/GatewellAgent.csproj
+
+      - name: Publish (single-file, self-contained, win-x64)
+        run: >
+          dotnet publish windows/GatewellAgent/GatewellAgent.csproj
+          -c Release
+          -r win-x64
+          --self-contained true
+          /p:PublishSingleFile=true
+          /p:DebugType=None
+          /p:DebugSymbols=false
+          -o publish
+
+      - name: Rename to artifact contract
+        shell: pwsh
+        env:
+          ORG_ID: ${{ inputs.org_id }}
+        run: |
+          $out = "GatewellAgent-$env:ORG_ID-windows-x64.exe"
+          Move-Item -Path publish/GatewellAgent.exe -Destination "publish/$out" -Force
+          Get-Item "publish/$out" | Select-Object Name, Length
+
+      - name: Verify the exe was stamped with this org_id
+        shell: pwsh
+        env:
+          ORG_ID: ${{ inputs.org_id }}
+        run: |
+          # .NET stores string literals as UTF-16 in the metadata heap, so a
+          # plain ASCII scan gives a false negative. Read as Unicode.
+          $path  = "publish/GatewellAgent-$env:ORG_ID-windows-x64.exe"
+          $bytes = [IO.File]::ReadAllBytes($path)
+          $text  = [Text.Encoding]::Unicode.GetString($bytes)
+
+          if ($text -notlike "*$env:ORG_ID*") {
+            Write-Error "org_id was not found in the published binary"
+            exit 1
+          }
+          if ($text -like "*__ORG_ID__*") {
+            Write-Error "placeholder __ORG_ID__ survived into the published binary"
+            exit 1
+          }
+          Write-Host "org_id verified in the published binary" 
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: GatewellAgent-${{ inputs.org_id }}-windows-x64.exe
+          path: publish/GatewellAgent-${{ inputs.org_id }}-windows-x64.exe
+          if-no-files-found: error
+          retention-days: 30
